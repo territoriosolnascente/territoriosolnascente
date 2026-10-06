@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mapa Território — Visitas</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><h1>🗺️ Mapa de Território e Visitas</h1></header>
+
+<div class="progresso">
+  <strong id="textoProgresso">0% de cobertura</strong>
+  <div class="barra"><div class="barra-fill" id="barraFill"></div></div>
+</div>
+
+<div class="filtros">
+  <input type="text" id="busca" placeholder="🔎 Pesquisar quadra...">
+  <select id="filtroStatus">
+    <option value="todos">Todos os status</option>
+    <option value="pendente">🟢 Pendente</option>
+    <option value="andamento">🟡 Em andamento</option>
+    <option value="visitada">🔵 Visitada</option>
+    <option value="revisitar">🔴 Revisitar</option>
+  </select>
+  <button id="btnResetar" style="background:#e74c3c;color:#fff;border:none;border-radius:6px;padding:8px 14px;cursor:pointer;">🔄 Resetar tudo</button>
+</div>
+
+<div id="mapa"></div>
+
+<div id="painel" class="oculto">
+  <h2 id="painelTitulo"></h2>
+  <label>Status:
+    <select id="status">
+      <option value="pendente">🟢 Pendente</option>
+      <option value="andamento">🟡 Em andamento</option>
+      <option value="visitada">🔵 Visitada</option>
+      <option value="revisitar">🔴 Revisitar</option>
+    </select>
+  </label>
+  <label>👤 Responsável: <input type="text" id="responsavel"></label>
+  <label>📅 Data da visita: <input type="date" id="data"></label>
+  <label>📝 Observações: <textarea id="obs"></textarea></label>
+  <button onclick="salvarQuadra()">💾 Salvar</button>
+  <button onclick="fecharPainel()">Fechar</button>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="dados.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
