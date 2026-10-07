@@ -36,7 +36,7 @@ function sincronizarTela() {
 async function salvarNoFirebase() {
   localStorage.setItem('territorio', JSON.stringify(dados));
   try {
-    await fetch(FIREBASE_URL + '/territorio.json', { method: 'PUT', body: JSON.stringify(dados) });
+    await fetch(FIREBASE_URL + '/territorio.json', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dados) });
   } catch (e) { console.warn('Falha ao salvar no Firebase', e); }
 }
 
