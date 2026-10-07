@@ -5,11 +5,43 @@ const CORES = {
   revisitar: '#e74c3c'
 };
 
+const FIREBASE_URL = 'https://mapa-territorio-5166c-default-rtdb.firebaseio.com';
 let dados = JSON.parse(localStorage.getItem('territorio') || '{}');
 const mapa = L.map('mapa');
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '© OpenStreetMap'
 }).addTo(mapa);
+
+async function carregarDoFirebase() {
+  try {
+    const r = await fetch(FIREBASE_URL + '/territorio.json');
+    const remoto = await r.json();
+    if (remoto && typeof remoto === 'object') {
+      dados = remoto;
+      localStorage.setItem('territorio', JSON.stringify(dados));
+    }
+  } catch (e) { console.warn('Sem conexão com o Firebase, usando dados locais.', e); }
+  sincronizarTela();
+}
+
+function sincronizarTela() {
+  QUADRAS.forEach(q => {
+    if (!dados[q.nome]) dados[q.nome] = { status: 'pendente', responsavel: '', data: '', obs: '' };
+    camadas[q.nome].setStyle({ fillColor: CORES[dados[q.nome].status] });
+  });
+  atualizarProgresso();
+  aplicarFiltros();
+}
+
+async function salvarNoFirebase() {
+  localStorage.setItem('territorio', JSON.stringify(dados));
+  try {
+    await fetch(FIREBASE_URL + '/territorio.json', { method: 'PUT', body: JSON.stringify(dados) });
+  } catch (e) { console.warn('Falha ao salvar no Firebase', e); }
+}
+
+carregarDoFirebase();
+setInterval(carregarDoFirebase, 10000); // recarrega do Firebase a cada 10s
 
 const bounds = [];
 const camadas = {};
@@ -53,7 +85,7 @@ function salvarQuadra() {
     data: document.getElementById('data').value,
     obs: document.getElementById('obs').value
   };
-  localStorage.setItem('territorio', JSON.stringify(dados));
+  salvarNoFirebase();
   camadas[quadraAtual].setStyle({ fillColor: CORES[dados[quadraAtual].status] });
   atualizarProgresso();
   aplicarFiltros();
@@ -90,7 +122,7 @@ document.getElementById('btnResetar').addEventListener('click', () => {
     dados[q.nome] = { status: 'pendente', responsavel: '', data: '', obs: '' };
     camadas[q.nome].setStyle({ fillColor: CORES['pendente'] });
   });
-  localStorage.setItem('territorio', JSON.stringify(dados));
+  salvarNoFirebase();
   atualizarProgresso();
   aplicarFiltros();
 });
