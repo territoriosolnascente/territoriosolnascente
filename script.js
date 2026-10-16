@@ -6,66 +6,163 @@ const CORES = {
 };
 
 const FIREBASE_URL = 'https://mapa-territorio-5166c-default-rtdb.firebaseio.com';
-let dados = JSON.parse(localStorage.getItem('territorio') || '{}');
+const cacheLocal = {}; // id -> dados
+let territorioAtual = null;
+let quadraAtual = null;
+let dados = {};
+const camadas = {};
+
 const mapa = L.map('mapa');
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '© OpenStreetMap'
 }).addTo(mapa);
+mapa.on('click', fecharPainel);
 
-async function carregarDoFirebase() {
+// ---------- Seletor de territórios ----------
+const selTerritorio = document.getElementById('selTerritorio');
+const optGeral = document.createElement('option');
+optGeral.value = '__geral';
+optGeral.textContent = '🌐 Visão geral (todos)';
+selTerritorio.appendChild(optGeral);
+TERRITORIOS.forEach(t => {
+  const opt = document.createElement('option');
+  opt.value = t.id;
+  opt.textContent = t.nome;
+  selTerritorio.appendChild(opt);
+});
+selTerritorio.addEventListener('change', () => selecionarTerritorio(selTerritorio.value));
+
+// ---------- Dados ----------
+async function carregarTerritorio(id) {
+  let remoto = null;
   try {
-    const r = await fetch(FIREBASE_URL + '/territorio.json');
-    const remoto = await r.json();
-    if (remoto && typeof remoto === 'object') {
-      dados = remoto;
-      localStorage.setItem('territorio', JSON.stringify(dados));
-    }
-  } catch (e) { console.warn('Sem conexão com o Firebase, usando dados locais.', e); }
-  sincronizarTela();
+    const r = await fetch(`${FIREBASE_URL}/territorios/${id}.json`);
+    remoto = await r.json();
+  } catch (e) { console.warn('Sem conexão com o Firebase', e); }
+  if (remoto && typeof remoto === 'object') {
+    cacheLocal[id] = remoto;
+    localStorage.setItem('territorio-' + id, JSON.stringify(remoto));
+  } else {
+    const local = localStorage.getItem('territorio-' + id);
+    if (local) cacheLocal[id] = JSON.parse(local);
+  }
+  if (!cacheLocal[id]) cacheLocal[id] = {};
+  return cacheLocal[id];
 }
 
-function sincronizarTela() {
-  QUADRAS.forEach(q => {
+async function salvarTerritorio() {
+  localStorage.setItem('territorio-' + territorioAtual.id, JSON.stringify(dados));
+  try {
+    await fetch(`${FIREBASE_URL}/territorios/${territorioAtual.id}.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(dados)
+    });
+  } catch (e) { console.warn('Falha ao salvar no Firebase', e); }
+}
+
+// ---------- Desenho ----------
+function limparCamadas() {
+  Object.values(camadas).forEach(p => mapa.removeLayer(p));
+  Object.keys(camadas).forEach(k => delete camadas[k]);
+}
+
+function desenharTerritorio(t) {
+  limparCamadas();
+  const bounds = [];
+  dados = cacheLocal[t.id] || {};
+  t.quadras.forEach(q => {
     if (!dados[q.nome]) dados[q.nome] = { status: 'pendente', responsavel: '', data: '', obs: '' };
-    camadas[q.nome].setStyle({ fillColor: CORES[dados[q.nome].status] });
+    const pol = L.polygon(q.pontos, { color: '#333', weight: 2, fillColor: CORES[dados[q.nome].status], fillOpacity: 0.5 }).addTo(mapa);
+    pol.bindTooltip(q.nome);
+    pol.on('click', (e) => { L.DomEvent.stopPropagation(e); abrirPainel(q.nome); });
+    camadas[q.nome] = pol;
+    bounds.push(...q.pontos);
   });
+  mapa.invalidateSize();
+  mapa.fitBounds(bounds);
+  setTimeout(() => {
+    document.querySelectorAll('.leaflet-interactive').forEach(p => p.setAttribute('tabindex', '-1'));
+  }, 500);
   atualizarProgresso();
   aplicarFiltros();
 }
 
-async function salvarNoFirebase() {
-  localStorage.setItem('territorio', JSON.stringify(dados));
-  try {
-    await fetch(FIREBASE_URL + '/territorio.json', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dados) });
-  } catch (e) { console.warn('Falha ao salvar no Firebase', e); }
+async function selecionarTerritorio(id) {
+  if (id === '__geral') { await visaoGeral(); return; }
+  document.getElementById('resumo').classList.add('oculto');
+  territorioAtual = TERRITORIOS.find(t => t.id === id);
+  await carregarTerritorio(id);
+  desenharTerritorio(territorioAtual);
 }
 
-carregarDoFirebase();
-setInterval(carregarDoFirebase, 10000); // recarrega do Firebase a cada 10s
+// ---------- Visão geral (admin) ----------
+async function visaoGeral() {
+  territorioAtual = null;
+  limparCamadas();
+  dados = {};
+  const todosBounds = [];
+  const resumo = document.getElementById('resumo');
+  resumo.innerHTML = '<h3>🌐 Visão geral dos territórios</h3>';
+  resumo.classList.remove('oculto');
 
-const bounds = [];
-const camadas = {};
-let quadraAtual = null;
+  let totalGeral = 0, visitadasGeral = 0;
 
-Object.keys(dados).forEach(k => { if (!QUADRAS.some(q => q.nome === k)) delete dados[k]; });
-QUADRAS.forEach(q => {
-  if (!dados[q.nome]) dados[q.nome] = { status: 'pendente', responsavel: '', data: '', obs: '' };
-  const pol = L.polygon(q.pontos, { color: '#333', weight: 2, fillColor: CORES[dados[q.nome].status], fillOpacity: 0.5 }).addTo(mapa);
-  pol.bindTooltip(q.nome);
-  pol.on('click', (e) => { L.DomEvent.stopPropagation(e); abrirPainel(q.nome); });
-  camadas[q.nome] = pol;
-  bounds.push(...q.pontos);
-});
-mapa.fitBounds(bounds);
-mapa.on('click', fecharPainel);
-setTimeout(() => {
-  document.querySelectorAll('.leaflet-interactive').forEach(p => p.setAttribute('tabindex', '-1'));
-}, 500);
+  for (const t of TERRITORIOS) {
+    const d = await carregarTerritorio(t.id);
+    let visitadas = 0;
+    t.quadras.forEach(q => {
+      const info = d[q.nome] || { status: 'pendente', responsavel: '', data: '', obs: '' };
+      visitadas += info.status === 'visitada' ? 1 : 0;
+      const pol = L.polygon(q.pontos, {
+        color: '#333', weight: 1.5,
+        fillColor: CORES[info.status] || CORES.pendente, fillOpacity: 0.55
+      }).addTo(mapa);
+      pol.bindTooltip(
+        `${q.nome} — ${info.status}` +
+        (info.responsavel ? `<br>👤 ${info.responsavel}` : '') +
+        (info.data ? `<br>📅 ${info.data}` : '')
+      );
+      pol.on('click', (e) => { L.DomEvent.stopPropagation(e); });
+      camadas[q.nome] = pol;
+      todosBounds.push(...q.pontos);
+    });
+    const total = t.quadras.length;
+    const pct = total ? Math.round((visitadas / total) * 100) : 0;
+    totalGeral += total;
+    visitadasGeral += visitadas;
 
+    const item = document.createElement('div');
+    item.className = 'item';
+    item.innerHTML = `
+      <div class="linha"><strong>${t.nome}</strong><span>${visitadas}/${total} — ${pct}%</span></div>
+      <div class="mini"><span style="width:${pct}%"></span></div>`;
+    item.querySelector('.linha').onclick = () => {
+      selTerritorio.value = t.id;
+      selecionarTerritorio(t.id);
+    };
+    resumo.appendChild(item);
+  }
+
+  const pctGeral = totalGeral ? Math.round((visitadasGeral / totalGeral) * 100) : 0;
+  document.getElementById('textoProgresso').textContent =
+    `🌐 Todos os territórios — ${visitadasGeral} de ${totalGeral} quadras visitadas — ${pctGeral}% de cobertura`;
+  document.getElementById('barraFill').style.width = pctGeral + '%';
+
+  if (todosBounds.length) {
+    mapa.invalidateSize();
+    mapa.fitBounds(todosBounds);
+  }
+  setTimeout(() => {
+    document.querySelectorAll('.leaflet-interactive').forEach(p => p.setAttribute('tabindex', '-1'));
+  }, 500);
+}
+
+// ---------- Painel ----------
 function abrirPainel(nome) {
   quadraAtual = nome;
   const d = dados[nome];
-  document.getElementById('painelTitulo').textContent = nome;
+  document.getElementById('painelTitulo').textContent = `${territorioAtual.nome} — ${nome}`;
   document.getElementById('status').value = d.status;
   document.getElementById('responsavel').value = d.responsavel;
   document.getElementById('data').value = d.data;
@@ -85,7 +182,7 @@ function salvarQuadra() {
     data: document.getElementById('data').value,
     obs: document.getElementById('obs').value
   };
-  salvarNoFirebase();
+  salvarTerritorio();
   camadas[quadraAtual].setStyle({ fillColor: CORES[dados[quadraAtual].status] });
   atualizarProgresso();
   aplicarFiltros();
@@ -95,8 +192,9 @@ function salvarQuadra() {
 function atualizarProgresso() {
   const total = Object.keys(dados).length;
   const visitadas = Object.values(dados).filter(d => d.status === 'visitada').length;
-  const pct = Math.round((visitadas / total) * 100);
-  document.getElementById('textoProgresso').textContent = `${visitadas} de ${total} quadras visitadas — ${pct}% de cobertura`;
+  const pct = total ? Math.round((visitadas / total) * 100) : 0;
+  document.getElementById('textoProgresso').textContent =
+    `${territorioAtual ? territorioAtual.nome + ' — ' : ''}${visitadas} de ${total} quadras visitadas — ${pct}% de cobertura`;
   document.getElementById('barraFill').style.width = pct + '%';
 }
 
@@ -113,18 +211,51 @@ function aplicarFiltros() {
 
 document.getElementById('busca').addEventListener('input', aplicarFiltros);
 document.getElementById('filtroStatus').addEventListener('change', aplicarFiltros);
+
 const SENHA_ADM = 'admin123'; // 🔑 altere aqui sua senha de administrador
 document.getElementById('btnResetar').addEventListener('click', () => {
+  if (!territorioAtual) { alert('Selecione um território específico para resetar.'); return; }
   const senha = prompt('🔒 Digite a senha de administrador:');
   if (senha !== SENHA_ADM) { alert('Senha incorreta. Acesso negado.'); return; }
-  if (!confirm('Resetar tudo? Todas as quadras voltarão para PENDENTE e os dados (responsável, data, observações) serão apagados.')) return;
-  QUADRAS.forEach(q => {
+  if (!confirm(`Resetar "${territorioAtual.nome}"? Todas as quadras voltarão para PENDENTE.`)) return;
+  territorioAtual.quadras.forEach(q => {
     dados[q.nome] = { status: 'pendente', responsavel: '', data: '', obs: '' };
     camadas[q.nome].setStyle({ fillColor: CORES['pendente'] });
   });
-  salvarNoFirebase();
+  salvarTerritorio();
   atualizarProgresso();
   aplicarFiltros();
 });
 
-atualizarProgresso();
+// ---------- Sincronização em tempo real ----------
+let ultimaBusca = '';
+setInterval(async () => {
+  if (!territorioAtual) return;
+  try {
+    const r = await fetch(`${FIREBASE_URL}/territorios/${territorioAtual.id}.json`);
+    const remoto = await r.json();
+    const s = JSON.stringify(remoto || {});
+    if (s !== ultimaBusca) {
+      ultimaBusca = s;
+      if (remoto && typeof remoto === 'object') {
+        cacheLocal[territorioAtual.id] = remoto;
+        localStorage.setItem('territorio-' + territorioAtual.id, s);
+        dados = remoto;
+        desenharTerritorio(territorioAtual);
+      }
+    }
+  } catch (e) { /* offline */ }
+}, 8000);
+
+// ---------- Início ----------
+(async () => {
+  if (TERRITORIOS.length) {
+    selTerritorio.value = TERRITORIOS[0].id;
+    await selecionarTerritorio(TERRITORIOS[0].id);
+    try {
+      const r = await fetch(`${FIREBASE_URL}/territorios/${TERRITORIOS[0].id}.json`);
+      const remoto = await r.json();
+      ultimaSinc = JSON.stringify(remoto || {});
+    } catch (e) { /* offline */ }
+  }
+})();
