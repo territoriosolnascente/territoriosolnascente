@@ -42,14 +42,69 @@ header {
   gap: 8px;
   padding: 10px 16px;
   background: #fff;
+  flex-wrap: wrap;
+  align-items: center;
 }
 
 .filtros input,
 .filtros select {
-  padding: 8px;
+  padding: 7px 8px;
   border: 1px solid #ccc;
   border-radius: 6px;
-  flex: 1;
+  font-size: 13px;
+  min-width: 0;
+}
+
+#selTerritorio {
+  flex: 0 1 110px;
+  max-width: 130px;
+}
+
+#busca {
+  flex: 1 1 120px;
+}
+
+#filtroStatus {
+  flex: 1 1 120px;
+}
+
+#btnResetar {
+  flex: 0 1 auto;
+  white-space: nowrap;
+  background: #e74c3c;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 7px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+@media (max-width: 600px) {
+  .filtros {
+    gap: 6px;
+    padding: 8px 10px;
+  }
+  .filtros input,
+  .filtros select,
+  #btnResetar {
+    font-size: 12px;
+    padding: 6px 8px;
+  }
+  #selTerritorio {
+    flex: 1 1 80px;
+    max-width: 100px;
+  }
+  #busca,
+  #filtroStatus {
+    flex: 1 1 100px;
+  }
+  #btnResetar {
+    flex: 1 1 100%;
+  }
+  #mapa {
+    height: calc(100vh - 230px);
+  }
 }
 
 #mapa {
