@@ -6,11 +6,13 @@ const CORES = {
 };
 
 const FIREBASE_URL = 'https://mapa-territorio-5166c-default-rtdb.firebaseio.com';
+const SENHA_ADM = 'admin123'; // senha do responsável (visão geral + reset)
 const cacheLocal = {}; // id -> dados
 let territorioAtual = null;
 let quadraAtual = null;
 let dados = {};
 const camadas = {};
+let visaoGeralAutorizado = false; // sessão: libera após acertar a senha uma vez
 
 const mapa = L.map('mapa');
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -89,7 +91,18 @@ function desenharTerritorio(t) {
 }
 
 async function selecionarTerritorio(id) {
-  if (id === '__geral') { await visaoGeral(); return; }
+  if (id === '__geral') {
+    if (!visaoGeralAutorizado) {
+      const senha = prompt('🔒 Visão geral restrita. Digite a senha do responsável:');
+      if (senha !== SENHA_ADM) {
+        alert('Senha incorreta. Acesso negado.');
+        selTerritorio.value = territorioAtual ? territorioAtual.id : TERRITORIOS[0].id;
+        return;
+      }
+      visaoGeralAutorizado = true;
+    }
+    await visaoGeral(); return;
+  }
   document.getElementById('resumo').classList.add('oculto');
   territorioAtual = TERRITORIOS.find(t => t.id === id);
   await carregarTerritorio(id);
@@ -97,7 +110,7 @@ async function selecionarTerritorio(id) {
 }
 
 // ---------- Visão geral (admin) ----------
-async function visaoGeral() {
+async function visaoGeral(jaCarregado = false) {
   territorioAtual = null;
   limparCamadas();
   dados = {};
@@ -109,7 +122,7 @@ async function visaoGeral() {
   let totalGeral = 0, visitadasGeral = 0;
 
   for (const t of TERRITORIOS) {
-    const d = await carregarTerritorio(t.id);
+    const d = jaCarregado ? (cacheLocal[t.id] || {}) : await carregarTerritorio(t.id);
     let visitadas = 0;
     t.quadras.forEach(q => {
       const info = d[q.nome] || { status: 'pendente', responsavel: '', data: '', obs: '' };
@@ -149,9 +162,18 @@ async function visaoGeral() {
     `🌐 Todos os territórios — ${visitadasGeral} de ${totalGeral} quadras visitadas — ${pctGeral}% de cobertura`;
   document.getElementById('barraFill').style.width = pctGeral + '%';
 
-  if (todosBounds.length) {
+  // Atualiza a referência do sync para não entrar em loop
+  try {
+    const snap = {};
+    for (const t of TERRITORIOS) snap[t.id] = cacheLocal[t.id] || {};
+    ultimaBuscaGeral = JSON.stringify(snap);
+  } catch (e) { /* ignora */ }
+
+  if (!jaCarregado && todosBounds.length) {
     mapa.invalidateSize();
     mapa.fitBounds(todosBounds);
+  } else {
+    mapa.invalidateSize();
   }
   setTimeout(() => {
     document.querySelectorAll('.leaflet-interactive').forEach(p => p.setAttribute('tabindex', '-1'));
@@ -212,7 +234,6 @@ function aplicarFiltros() {
 document.getElementById('busca').addEventListener('input', aplicarFiltros);
 document.getElementById('filtroStatus').addEventListener('change', aplicarFiltros);
 
-const SENHA_ADM = 'admin123'; // 🔑 altere aqui sua senha de administrador
 document.getElementById('btnResetar').addEventListener('click', () => {
   if (!territorioAtual) { alert('Selecione um território específico para resetar.'); return; }
   const senha = prompt('🔒 Digite a senha de administrador:');
@@ -229,19 +250,42 @@ document.getElementById('btnResetar').addEventListener('click', () => {
 
 // ---------- Sincronização em tempo real ----------
 let ultimaBusca = '';
+let ultimaBuscaGeral = '';
 setInterval(async () => {
-  if (!territorioAtual) return;
   try {
-    const r = await fetch(`${FIREBASE_URL}/territorios/${territorioAtual.id}.json`);
-    const remoto = await r.json();
-    const s = JSON.stringify(remoto || {});
-    if (s !== ultimaBusca) {
-      ultimaBusca = s;
-      if (remoto && typeof remoto === 'object') {
-        cacheLocal[territorioAtual.id] = remoto;
-        localStorage.setItem('territorio-' + territorioAtual.id, s);
-        dados = remoto;
-        desenharTerritorio(territorioAtual);
+    // Modo território único
+    if (territorioAtual) {
+      const r = await fetch(`${FIREBASE_URL}/territorios/${territorioAtual.id}.json`);
+      const remoto = await r.json();
+      const s = JSON.stringify(remoto || {});
+      if (s !== ultimaBusca) {
+        ultimaBusca = s;
+        if (remoto && typeof remoto === 'object') {
+          cacheLocal[territorioAtual.id] = remoto;
+          localStorage.setItem('territorio-' + territorioAtual.id, s);
+          dados = remoto;
+          desenharTerritorio(territorioAtual);
+        }
+      }
+      return;
+    }
+    // Modo visão geral: observa TODOS os territórios
+    if (selTerritorio.value === '__geral') {
+      const snapshot = {};
+      for (const t of TERRITORIOS) {
+        try {
+          const r = await fetch(`${FIREBASE_URL}/territorios/${t.id}.json`);
+          snapshot[t.id] = await r.json() || {};
+        } catch (e) { snapshot[t.id] = cacheLocal[t.id] || {}; }
+      }
+      const s = JSON.stringify(snapshot);
+      if (s !== ultimaBuscaGeral) {
+        ultimaBuscaGeral = s;
+        for (const t of TERRITORIOS) {
+          cacheLocal[t.id] = snapshot[t.id] || {};
+          localStorage.setItem('territorio-' + t.id, JSON.stringify(cacheLocal[t.id]));
+        }
+        await visaoGeral(true);
       }
     }
   } catch (e) { /* offline */ }
@@ -255,7 +299,7 @@ setInterval(async () => {
     try {
       const r = await fetch(`${FIREBASE_URL}/territorios/${TERRITORIOS[0].id}.json`);
       const remoto = await r.json();
-      ultimaSinc = JSON.stringify(remoto || {});
+      ultimaBusca = JSON.stringify(remoto || {});
     } catch (e) { /* offline */ }
   }
 })();
